@@ -17,7 +17,9 @@ git submodule update riscv-gcc
 git submodule update riscv-glibc
 git submodule update riscv-newlib
 git submodule update riscv-dejagnu
-cd ..
+cd riscv-gcc
+git checkout be9abee2aaa919ad8530336569d17b5a60049717
+cd ../..
 
 ./build.sh
 cd riscv-gnu-toolchain/build
