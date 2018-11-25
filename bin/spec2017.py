@@ -4,7 +4,7 @@ import os
 import stat
 import shutil
 import argparse
-from subprocess import Popen, check_call
+from subprocess import Popen, run
 
 SPEC_INT = [
     "00.perlbench",
@@ -29,6 +29,7 @@ def parse_args():
                         help='compile binaries?', default=False)
     parser.add_argument("-r", "--run", dest="run", action='store_true',
                         help='run spike simulation?', default=False)
+    parser.add_argument("--spec-dir", dest="spec_dir", help='spec directory')
     args = parser.parse_args()
     assert args.suite == 'intrate' or args.suite == 'intspeed'
     assert args.input_type == 'test' or args.input_type == 'ref' or args.input_type == 'train'
@@ -36,6 +37,16 @@ def parse_args():
     return args
 
 def compile_spec2017(args):
+    if args.compile and args.spec_dir:
+        env = os.environ.copy()
+        env["SPEC_DIR"] = args.spec_dir
+        run([
+            "./gen_binaries.sh",
+            "--compile",
+            "--suite", args.suite,
+            "--input", args.input_type],
+        cwd="Speckle-2017", env=env, check=True)
+
     build_dir = os.path.join("Speckle-2017", "build", "overlay", args.suite, args.input_type)
     run_script_dir = os.path.join(
         "run-scripts", "spec2017-%s-%s" % (args.suite, args.input_type))
@@ -62,7 +73,7 @@ def compile_spec2017(args):
 
             os.chmod(run_script, stat.S_IRUSR | stat.S_IWUSR | stat.S_IXUSR |
                      stat.S_IRGRP | stat.S_IXGRP | stat.S_IROTH | stat.S_IXOTH)
-            check_call(["bin/generate-initramfs.sh", os.path.join(build_dir, name), run_script])
+            run(["bin/generate-initramfs.sh", os.path.join(build_dir, name), run_script], check=True)
             shutil.move("bblvmlinux", binary)
 
     return binaries

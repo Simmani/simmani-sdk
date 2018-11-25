@@ -12,4 +12,4 @@
 	url = https://github.com/ccelio/Speckle.git
 [submodule "Speckle-2017"]
 	path = Speckle-2017
-	url = https://github.com/ccelio/Speckle.git
+	url = https://github.com/dgkim/Speckle-2017.git
