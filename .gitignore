@@ -1,3 +1,6 @@
+overlays
+outputs
 bblvmlinux*
 *.swp
 riscv-tools
+.sconsign.dblite
