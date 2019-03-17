@@ -3,5 +3,6 @@ outputs
 bblvmlinux*
 *.swp
 *.tmp
+esp-tools
 riscv-tools
 .sconsign.dblite
