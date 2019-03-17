@@ -8,7 +8,7 @@ def _change_overlay(target, source, overlay):
     with open(target, 'w') as _t, open(source, 'r') as _s:
         for line in _s:
             if 'BR2_ROOTFS_OVERLAY' in line:
-                _t.write('BR2_ROOTFS_OVERLAY="../%s"\n' % overlay)
+                _t.write('BR2_ROOTFS_OVERLAY="%s"\n' % os.path.abspath(overlay))
             else:
                 _t.write(line)
 
@@ -24,7 +24,7 @@ def _write_init(target, text):
 
 WriteInit = ActionFactory(
     _write_init,
-    lambda target, text: 'WriteText("%s", "%s")' % (target, text))
+    lambda target, text: 'WriteInit("%s", "%s")' % (target, text))
 
 def _init_d_tgts(target, source, env):
     return target + [
@@ -41,16 +41,42 @@ def _overlay_actions(source, target, env, for_signature):
         WriteInit(os.path.join(init_d, 'rcK'), '\n'.join([
             '#!/bin/sh', '# Do nothing']))
     ] + reduce(add, [
-        [
-            Mkdir(t.dir.abspath),
-            Copy(t.abspath, s.abspath),
+        ([
+            Mkdir(t.dir.abspath)
+        ] if os.path.isdir(t.dir.abspath) else []) + [
+            Copy(t.abspath, s.abspath)
         ]
         for t, s in zip(target, source)
     ])
 
-def _bbl_actions(source, target, env, for_signature):
-    build = os.path.join('riscv-pk', 'build-' + env['SUFFIX'])
+def _linux_srcs(target, source, env):
+    return target, source + reduce(add, [
+        [
+            os.path.join(dirpath, f)
+            for f in filenames if os.path.splitext(f)[1] in ['.c', '.S']
+        ]
+        for dirpath, _, filenames in os.walk(
+            os.path.join('linux', 'arch', 'riscv'))
+    ])
+
+def _linux_actions(source, target, env, for_signature):
+    buildroot_dir = os.path.abspath('buildroot')
+    linux_dir = os.path.abspath('linux')
+    build = os.path.abspath(os.path.join(
+        'riscv-pk', 'build-%s' % target[0].name))
     return [
+        # buildroot config
+        Copy(os.path.join('buildroot', '.config'), source[0].abspath),
+        ' '.join(['make', '-C', buildroot_dir, 'oldconfig']),
+        # Build buildroot
+        Delete(os.path.join('buildroot', 'output', 'target', 'root')),
+        ' '.join(['make', '-C', buildroot_dir, '-j1']),
+        # linux config
+        Copy(os.path.join(linux_dir, '.config'), os.path.abspath('linux-config')),
+        ' '.join(['make', '-C', linux_dir, 'ARCH=riscv', 'oldconfig']),
+        # Build linux
+        ' '.join(['make', '-C', linux_dir, '-j', 'ARCH=riscv', 'vmlinux']),
+        # Build bbl
         Delete(build),
         Mkdir(build),
         ' '.join([
@@ -58,72 +84,63 @@ def _bbl_actions(source, target, env, for_signature):
             '../configure',
             '--prefix=' + env['ENV']['RISCV'],
             '--host=riscv64-unknown-elf',
-            '--with-payload=' + source[0].abspath
+            '--with-payload=' + os.path.join(linux_dir, 'vmlinux'),
         ]),
-        ' '.join([
-            'cd', build, '&&', 'make'
-        ]),
+        ' '.join(['cd', build, '&&', 'make'])
+    ] + ([
+        Mkdir(target[0].dir.abspath)
+    ] if os.path.isdir(target[0].dir.abspath) else []) + [
         Copy(target[0].abspath, os.path.join(build, 'bbl'))
     ]
 
-def init():
-    return Environment(
+def setup():
+    variables = Variables('config.py', ARGUMENTS)
+    variables.AddVariables(
+        ('SPEC2006_DIR', 'Directory path for SPEC2006', ''))
+    overlay_dir = os.path.abspath('overlays')
+    output_dir = os.path.abspath('outputs')
+    env = Environment(
+        variables=variables,
         ENV=os.environ,
+        OVERLAY_DIR=overlay_dir,
+        OUTPUT_DIR=output_dir,
+        WRITE_INIT=WriteInit,
         BUILDERS={
             'Overlay': Builder(
                 generator=_overlay_actions,
                 emitter=_init_d_tgts),
-            'BBL': Builder(
-                generator=_bbl_actions)
+            'Linux': Builder(
+                generator=_linux_actions,
+                emitter=_linux_srcs),
+            'Spike': Builder(
+                action=' '.join([
+                    'spike',
+                    '--isa=rv64gc',
+                    '--extension=hwacha',
+                    '$SOURCE.abspath', '>',
+                    os.path.join(output_dir, '${SOURCE.file}.out')
+                ]))
         })
 
-def build_linux(env, suffix, overlay_dir, overlay_files):
-    # Config
+    return env
+
+def build_bblvmlinux(env, suffix, overlay_dir, overlay_files):
     buildroot_config = env.Command(
-        os.path.join('buildroot', '.config'),
+        os.path.join(env['OUTPUT_DIR'], 'buildroot-config-' + suffix),
         'buildroot-config',
         ChangeOverlay('$TARGET', '$SOURCE', overlay_dir))
-
-    buildroot_oldconfig = env.Command(
-        os.path.join('buildroot', '.config.old'),
-        buildroot_config,
-        ' '.join(['make', '-C', 'buildroot', 'oldconfig']))
-
-    linux_config = env.Command(
-        os.path.join('linux', '.config'),
-        'linux-config',
-        Copy('$TARGET', '$SOURCE'))
-
-    linux_oldconfig = env.Command(
-        os.path.join('linux', '.config.old'),
-        linux_config,
-        ' '.join(['make', '-C', 'linux', 'ARCH=riscv', 'oldconfig']))
-
-    # Build
-    initramfs = env.Command(
-        os.path.join('buildroot', 'output', 'images', 'rootfs.cpio'),
-        [buildroot_oldconfig] + overlay_files,
-        ' '.join(['make', '-C', 'buildroot', '-j1']))
-    env.SideEffect('#build', initramfs)
-
-    vmlinux = env.Command(
-        os.path.join('linux', 'vmlinux'),
-        linux_oldconfig + initramfs,
-        ' '.join(['make', '-C', '$TARGET.dir', '-j', 'ARCH=riscv', '$TARGET.file']))
-    env.SideEffect('#build', vmlinux)
-
-    if not os.path.exists('outputs'):
-        Execute(Mkdir('outputs'))
-    bblvmlinux = env.BBL(
-        os.path.join('outputs', 'bblvmlinux-' + suffix), vmlinux, SUFFIX=suffix)
-    env.SideEffect('#build', bblvmlinux)
+    env.Depends(buildroot_config, overlay_files)
+    bblvmlinux = env.Linux(
+        os.path.join('outputs', 'bblvmlinux-' + suffix),
+        buildroot_config)
+    env.SideEffect('#bblvmlinux', bblvmlinux)
     return bblvmlinux
 
 def build_hello(env):
     env.VariantDir(os.path.join('hello', 'hello'), 'hello', duplicate=0)
     env['CC'] = os.path.join(env['ENV']['RISCV'], 'bin', 'riscv64-unknown-elf-gcc')
     hello = env.Program(os.path.join('hello', 'hello', 'hello.c'))
-    overlay_dir = os.path.join('overlays', 'hello') 
+    overlay_dir = os.path.join(env['OVERLAY_DIR'], 'hello')
     overlay_files = env.Overlay(
         [
             os.path.join(overlay_dir, 'root', t.name)
@@ -132,11 +149,28 @@ def build_hello(env):
         hello,
         OVERLAY=overlay_dir,
         rcS='\n'.join(['#!/bin/sh', '/root/hello', 'poweroff']))
-    env.Alias('hello', build_linux(env, 'hello', overlay_dir, overlay_files))
+    env.Alias('hello', build_bblvmlinux(env, 'hello', overlay_dir, overlay_files))
+
+def build_spec2006(env):
+    spec2006 = env.SConscript(
+        os.path.join('spec2006', 'SConscript'), exports='env')
+    for suite, input_type in spec2006:
+        for benchmark, binary in spec2006[suite, input_type]:
+            bblvmlinux = build_bblvmlinux(
+                env,
+                '%s.%s' % (benchmark, input_type),
+                os.path.abspath(os.path.join(binary.dir.abspath, '..')),
+                [binary.abspath])
+            env.Alias(
+                'build-spec2006%s-%s' % (suite, input_type), bblvmlinux)
+            env.Alias(
+                'run-spec2006%s-%s' % (suite, input_type),
+                env.Spike('#run-%s.%s' % (benchmark, input_type), bblvmlinux))
 
 def main():
-    env = init()
+    env = setup()
     build_hello(env.Clone())
+    build_spec2006(env)
 
 if __name__ == 'SCons.Script':
     main()
