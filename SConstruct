@@ -66,6 +66,22 @@ WriteInit = ActionFactory(
     _write_init,
     lambda target, text: 'WriteInit("%s", "%s")' % (target, text))
 
+def _write_commands(target, binary, command):
+    with open(target, 'w') as _f, open(command, 'r') as _c:
+        _f.write('#!/bin/sh\n')
+        _f.write('cd /root\n')
+        for line in _c:
+            args = line[:line.rfind(' >')]
+            _f.write('echo "Run: ./%s %s"\n' % (binary, args))
+            _f.write('./%s %s\n' % (binary, args))
+        _f.write('poweroff\n')
+    os.chmod(target, os.stat(target).st_mode | stat.S_IEXEC)
+
+WriteCommands = ActionFactory(
+    _write_commands,
+    lambda target, binary, command:
+    'WriteCommands("%s", "%s", "%s")' % (target, binary, command))
+
 def _init_d_tgts(target, source, env):
     return target + [
         os.path.join(env['OVERLAY'], 'etc', 'init.d', 'rcS'),
@@ -96,26 +112,25 @@ def _linux_srcs(target, source, env):
             for f in filenames if os.path.splitext(f)[1] in ['.c', '.S']
         ]
         for dirpath, _, filenames in os.walk(
-            os.path.join('linux', 'arch', 'riscv'))
+            os.path.join(env['LINUX_DIR'], 'arch', 'riscv'))
     ])
 
 def _linux_actions(source, target, env, for_signature):
-    buildroot_dir = os.path.abspath('buildroot')
-    linux_dir = os.path.abspath('linux')
     build = os.path.abspath(os.path.join(
-        'riscv-pk', 'build-%s' % target[0].name))
+        env['RISCV_PK_DIR'], 'build-%s' % target[0].name))
     return [
         # buildroot config
-        Copy(os.path.join('buildroot', '.config'), source[0].abspath),
-        ' '.join(['make', '-C', buildroot_dir, 'oldconfig']),
+        Copy(os.path.join(env['BUILDROOT_DIR'], '.config'), source[0].abspath),
+        ' '.join(['make', '-C', env['BUILDROOT_DIR'], 'oldconfig']),
         # Build buildroot
-        Delete(os.path.join('buildroot', 'output', 'target', 'root')),
-        ' '.join(['make', '-C', buildroot_dir, '-j1']),
+        Delete(os.path.join(env['BUILDROOT_DIR'], 'output', 'target', 'root')),
+        ' '.join(['make', '-C', env['BUILDROOT_DIR'], '-j1']),
         # linux config
-        Copy(os.path.join(linux_dir, '.config'), os.path.abspath('linux-config')),
-        ' '.join(['make', '-C', linux_dir, 'ARCH=riscv', 'oldconfig']),
+        Copy(os.path.join(env['LINUX_DIR'], '.config'),
+             os.path.join(env['BASE_DIR'], 'linux-config')),
+        ' '.join(['make', '-C', env['LINUX_DIR'], 'ARCH=riscv', 'oldconfig']),
         # Build linux
-        ' '.join(['make', '-C', linux_dir, '-j', 'ARCH=riscv', 'vmlinux']),
+        ' '.join(['make', '-C', env['LINUX_DIR'], '-j', 'ARCH=riscv', 'vmlinux']),
         # Build bbl
         Delete(build),
         Mkdir(build),
@@ -124,7 +139,7 @@ def _linux_actions(source, target, env, for_signature):
             '../configure',
             '--prefix=' + env['ENV']['RISCV'],
             '--host=riscv64-unknown-elf',
-            '--with-payload=' + os.path.join(linux_dir, 'vmlinux'),
+            '--with-payload=' + os.path.join(env['LINUX_DIR'], 'vmlinux'),
         ]),
         ' '.join(['cd', build, '&&', 'make'])
     ] + ([
@@ -133,18 +148,37 @@ def _linux_actions(source, target, env, for_signature):
         Copy(target[0].abspath, os.path.join(build, 'bbl'))
     ]
 
+def build_bblvmlinux(env, suffix, overlay_dir, overlay_files):
+    buildroot_config = env.Command(
+        os.path.join(env['OUTPUT_DIR'], 'buildroot-config-' + suffix),
+        os.path.join(env['BASE_DIR'], 'buildroot-config'),
+        ChangeOverlay('$TARGET', '$SOURCE', overlay_dir))
+    env.Depends(buildroot_config, overlay_files)
+    bblvmlinux = env.Linux(
+        os.path.join(env['OUTPUT_DIR'], 'bblvmlinux-' + suffix),
+        buildroot_config)
+    env.SideEffect('#bblvmlinux', bblvmlinux)
+    return bblvmlinux
+
 def setup():
     variables = Variables('config.py', ARGUMENTS)
     variables.AddVariables(
-        ('SPEC2006_DIR', 'Directory path for SPEC2006', ''))
+        ('SPEC2006_DIR', 'Directory path for SPEC2006', ''),
+        ('SPEC2017_DIR', 'Directory path for SPEC2017', ''))
     overlay_dir = os.path.abspath('overlays')
     output_dir = os.path.abspath('outputs')
     env = Environment(
         variables=variables,
         ENV=os.environ,
+        BASE_DIR=os.path.abspath(os.path.curdir),
+        BUILDROOT_DIR=os.path.abspath('buildroot'),
+        LINUX_DIR=os.path.abspath('linux'),
+        RISCV_PK_DIR=os.path.abspath('riscv-pk'),
         OVERLAY_DIR=overlay_dir,
         OUTPUT_DIR=output_dir,
         WRITE_INIT=WriteInit,
+        WRITE_COMMANDS=WriteCommands,
+        BUILD_BBLVMLINUX=build_bblvmlinux,
         BUILDERS={
             'Tools': Builder(
                 generator=_tool_actions),
@@ -166,18 +200,6 @@ def setup():
 
     return env
 
-def build_bblvmlinux(env, suffix, overlay_dir, overlay_files):
-    buildroot_config = env.Command(
-        os.path.join(env['OUTPUT_DIR'], 'buildroot-config-' + suffix),
-        'buildroot-config',
-        ChangeOverlay('$TARGET', '$SOURCE', overlay_dir))
-    env.Depends(buildroot_config, overlay_files)
-    bblvmlinux = env.Linux(
-        os.path.join('outputs', 'bblvmlinux-' + suffix),
-        buildroot_config)
-    env.SideEffect('#bblvmlinux', bblvmlinux)
-    return bblvmlinux
-
 def build_hello(env):
     env.VariantDir(os.path.join('hello', 'hello'), 'hello', duplicate=0)
     env['CC'] = os.path.join(env['ENV']['RISCV'], 'bin', 'riscv64-unknown-elf-gcc')
@@ -193,27 +215,19 @@ def build_hello(env):
         rcS='\n'.join(['#!/bin/sh', '/root/hello', 'poweroff']))
     env.Alias('hello', build_bblvmlinux(env, 'hello', overlay_dir, overlay_files))
 
-def build_spec2006(env):
-    spec2006 = env.SConscript(
-        os.path.join('spec2006', 'SConscript'), exports='env')
-    for suite, input_type in spec2006:
-        for benchmark, binary in spec2006[suite, input_type]:
-            bblvmlinux = build_bblvmlinux(
-                env,
-                '%s.%s' % (benchmark, input_type),
-                os.path.abspath(os.path.join(binary.dir.abspath, '..')),
-                [binary.abspath])
-            env.Alias(
-                'build-spec2006%s-%s' % (suite, input_type), bblvmlinux)
-            env.Alias(
-                'run-spec2006%s-%s' % (suite, input_type),
-                env.Spike('#run-%s.%s' % (benchmark, input_type), bblvmlinux))
-
 def main():
     env = setup()
     env.Alias('riscv-tools', env.Tools('#riscv-tools', None))
     build_hello(env.Clone())
-    build_spec2006(env)
+    env.SConscript(os.path.join('spec2006', 'SConscript'), exports='env')
+    env.SConscript(os.path.join('spec2017', 'SConscript'), exports='env')
+    env.Alias('clean', env.Command('#clean-linux', None, [
+        ' '.join(['make', '-C', env['BUILDROOT_DIR'], 'clean']),
+        ' '.join(['make', '-C', env['LINUX_DIR'], 'clean'])
+    ]))
+    env.Clean('all', [
+        env['OVERLAY_DIR'], env['OUTPUT_DIR']
+    ] + Glob(os.path.join('riscv-pk', 'build*')))
 
 if __name__ == 'SCons.Script':
     main()

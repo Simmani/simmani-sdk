@@ -1,0 +1,171 @@
+import os
+from operator import add
+from functools import reduce
+from itertools import product
+
+BENCHMARKS = {
+    'int': [
+        "00.perlbench",
+        "02.gcc",
+        "05.mcf",
+        "20.omnetpp",
+        "23.xalancbmk",
+        "25.x264",
+        "31.deepsjeng",
+        "41.leela",
+        "48.exchange2",
+        "57.xz",
+    ],
+    'fp': [
+        "03.bwaves",
+        "07.cactuBSSN",
+        "08.namd",
+        "11.povray",
+        "19.lbm",
+        "21.wrf",
+        "26.blender",
+        "27.cam4",
+        "28.pop2",
+        "38.imagick",
+        "44.nab",
+        "49.fotonik3d",
+        "54.roms"
+    ]
+}
+
+def _get_bmarks(suite, version):
+    return [
+        '%d%s_%s' % (5 if version == 'rate' else 6, bmark, version[0])
+        for bmark in BENCHMARKS[suite] if suite == 'int' or (
+            version == 'rate' and bmark not in [
+                '28.pop2',
+                '26.blender', # FIXME: compile error
+            ]) or (
+            version == 'speed' and bmark not in [
+                '08.namd',
+                '10.parest',
+                '11.povray',
+                '26.blender',
+                '21.wrf', # FIXME: compile error
+            ])
+    ]
+
+def _spec_run_cmd(args):
+    return ' '.join([
+        'cd', env['SPEC2017_DIR'], '&&',
+        'source', './shrc', '&&', 'runcpu'
+    ] + args)
+
+def _spec_actions(source, target, env, for_signature):
+    config = os.path.splitext(source[-2].name)[0]
+    hconfig = os.path.splitext(source[-1].name)[0]
+    prefix = os.path.join(env['SPEC2017_DIR'], 'benchspec', 'CPU')
+    bmarks = _get_bmarks(env['SUITE'], env['VERSION'])
+    run_dirs = [
+        os.path.join(
+            prefix, benchmark, 'run',
+            'run_base_ref%s_%s-m64.0000' % (env['VERSION'], hconfig)
+            if env['INPUT'] == 'ref' else
+            'run_base_%s_%s-m64.0000' % (env['INPUT'], hconfig))
+        for benchmark in bmarks
+    ]
+    WriteInit = env['WRITE_INIT']
+    WriteCommands = env['WRITE_COMMANDS']
+    return [
+        # Copy configs
+        Copy(os.path.join(env['SPEC2017_DIR'], s.name), s)
+        for s in source[-2:]
+    ] + [
+        # Compile SPEC
+        _spec_run_cmd([
+            '--action', 'build',
+            '--config', config,
+            '--size', env['INPUT']
+        ] + bmarks),
+        # Generate inputs
+        _spec_run_cmd([
+            '--action', 'runsetup',
+            '--config', hconfig,
+            '--size', env['INPUT']
+        ] + bmarks)
+    ] + reduce(add, [
+        [
+            # Install overlays
+            Delete(binary.dir.abspath),
+            Copy(binary.dir.abspath, run_dir),
+            Copy(binary.abspath, os.path.join(prefix, bmark, 'exe', binary.name)),
+            Delete(os.path.join(binary.dir.abspath, '..', 'etc', 'init.d')),
+            Mkdir(os.path.join(binary.dir.abspath, '..', 'etc', 'init.d')),
+            WriteCommands(
+                os.path.join(binary.dir.abspath, '..', 'etc', 'init.d', 'rcS'),
+                binary.name,
+                command.abspath),
+            WriteInit(
+                os.path.join(binary.dir.abspath, '..', 'etc', 'init.d', 'rcK'),
+                '\n'.join(['#!/bin/sh', '# Do nothing']))
+        ]
+        for run_dir, binary, bmark, command in zip(run_dirs, target, bmarks, source[:-2])
+    ], [])
+
+def main():
+    Import('env')
+
+    env.Append(BUILDERS={
+        'SPEC2017': Builder(generator=_spec_actions)
+    })
+
+    for suite, version, input_type in product(
+            ['int', 'fp'], ['rate', 'speed'], ['test', 'ref']):
+        bmarks = _get_bmarks(suite, version)
+        commands = [
+            os.path.abspath(os.path.join(
+                'commands',
+                '%s%s' % (suite, version),
+                '%s.%s.cmd' % (benchmark, input_type)))
+            for benchmark in bmarks
+        ]
+        binaries = [
+            os.path.join(
+                env['OVERLAY_DIR'], benchmark + '.' + input_type, 'root',
+                'cpu%s_base.riscv-64' % benchmark[4:]
+                if benchmark == '502.gcc_r'
+                else 'cpuxalan_r_base.riscv-64'
+                if benchmark == '523.xalancbmk_r'
+                else 'cactusBSSN_r_base.riscv-64'
+                if benchmark == '507.cactuBSSN_r' # wtf...
+                else 'sroms_base.riscv-64'
+                if benchmark == '654.roms_s'
+                else 'speed_%s_base.riscv-64' % benchmark[4:-2]
+                if benchmark in ['603.bwaves_s', '628.pop2_s']
+                else '%s_base.riscv-64' % (benchmark[4:]))
+            for benchmark in bmarks
+        ]
+        build = env.SPEC2017(
+            binaries,
+            commands + ['riscv.cfg', 'host.cfg'],
+            VERSION=version,
+            SUITE=suite,
+            INPUT=input_type)
+        env.Alias('spec2017%s%s-%s' % (suite, version, input_type), build)
+        env.SideEffect('#spec2017', build)
+
+        for benchmark, binary in zip(bmarks, build):
+            bblvmlinux = env['BUILD_BBLVMLINUX'](
+                env,
+                '%s.%s' % (benchmark, input_type),
+                os.path.abspath(os.path.join(binary.dir.abspath, '..')),
+                [binary.abspath])
+            env.Alias(
+                'build-spec2017%s%s-%s' % (suite, version, input_type), bblvmlinux)
+            env.Alias(
+                'run-spec2017%s%s-%s' % (suite, version, input_type),
+                env.Spike('#run-%s.%s' % (benchmark, input_type), bblvmlinux))
+
+    env.Clean(
+        'spec2017',
+        Glob(os.path.join(env['SPEC2017_DIR'], 'benchspec', 'CPU', '*', 'exe')) + \
+        Glob(os.path.join(env['SPEC2017_DIR'], 'benchspec', 'CPU', '*', 'run')) + \
+        Glob(os.path.join(env['SPEC2017_DIR'], 'benchspec', 'CPU', '*', 'build')))
+
+if __name__ == 'SCons.Script':
+    main()
