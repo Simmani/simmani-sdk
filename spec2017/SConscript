@@ -133,8 +133,8 @@ def main():
                 if benchmark == '523.xalancbmk_r'
                 else 'cactusBSSN_r_base.riscv-64'
                 if benchmark == '507.cactuBSSN_r' # wtf...
-                else 'sroms_base.riscv-64'
-                if benchmark == '654.roms_s'
+                else 's%s_base.riscv-64' % benchmark[4:-2]
+                if benchmark in ['602.gcc_s', '654.roms_s']
                 else 'speed_%s_base.riscv-64' % benchmark[4:-2]
                 if benchmark in ['603.bwaves_s', '628.pop2_s']
                 else '%s_base.riscv-64' % (benchmark[4:]))
