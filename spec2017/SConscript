@@ -24,7 +24,7 @@ BENCHMARKS = {
         "19.lbm",
         "21.wrf",
         "26.blender",
-        "27.cam4",
+        #"27.cam4", #FIXME: segfault
         "28.pop2",
         "38.imagick",
         "44.nab",
