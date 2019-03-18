@@ -1,9 +1,9 @@
 [submodule "riscv-pk"]
 	path = riscv-pk
 	url = https://github.com/riscv/riscv-pk.git
-[submodule "linux"]
-	path = linux
-	url = https://github.com/riscv/riscv-linux.git
 [submodule "buildroot"]
 	path = buildroot
 	url = https://github.com/Simmani/buildroot.git
+[submodule "riscv-linux"]
+	path = linux
+	url = https://github.com/Simmani/riscv-linux.git

@@ -1,0 +1,92 @@
+import os
+from operator import add
+from functools import reduce
+from SCons.Action import ActionFactory
+
+def _init_d_tgts(target, source, env):
+    return target + [
+        os.path.join(env['OVERLAY'], 'etc', 'init.d', 'rcS'),
+        os.path.join(env['OVERLAY'], 'etc', 'init.d', 'rcK')
+    ], source
+
+def _overlay_actions(source, target, env, for_signature):
+    init_d = os.path.join(env['OVERLAY'], 'etc', 'init.d')
+    WriteInit = env['WRITE_INIT']
+    return [
+        Delete(init_d),
+        Mkdir(init_d),
+        WriteInit(os.path.join(init_d, 'rcS'), env['rcS']),
+        WriteInit(os.path.join(init_d, 'rcK'), '\n'.join([
+            '#!/bin/sh', '# Do nothing']))
+    ] + reduce(add, [
+        ([
+            Mkdir(t.dir.abspath)
+        ] if os.path.isdir(t.dir.abspath) else []) + [
+            Copy(t.abspath, s.abspath)
+        ]
+        for t, s in zip(target, source)
+    ])
+
+def build_custom_bmark(env, bmark):
+    build = os.path.abspath(os.path.join(bmark, 'build'))
+    env.VariantDir(build, bmark, duplicate=0)
+    binary = env.Program(
+        os.path.join(build, bmark),
+        Glob(os.path.join(bmark, '*.c')) + \
+        Glob(os.path.join(bmark, '*.S')))
+    env.Alias(bmark, binary)
+    overlay_dir = os.path.join(env['OVERLAY_DIR'], bmark)
+    overlay_files = env.Overlay(
+        os.path.join(overlay_dir, 'root', binary[0].name),
+        binary,
+        OVERLAY=overlay_dir,
+        rcS="""
+#!/bin/sh
+echo "Run: /root/{bmark}/"
+/root/{bmark}
+poweroff""".format(bmark=bmark))
+    return env['BUILD_BBLVMLINUX'](env, bmark, overlay_dir, overlay_files)
+
+def main():
+    Import('env')
+
+    env.Append(BUILDERS={
+        'Overlay': Builder(
+            generator=_overlay_actions,
+            emitter=_init_d_tgts)
+    })
+
+    riscv_bin = os.path.join(env['ENV']['RISCV'], 'bin')
+    riscv_gcc_opts = ' '.join([
+        '-I' + os.path.abspath('common'),
+        '-O2',
+        '-DPREALLOCATE=1',
+        '-mcmodel=medany',
+        '-march=rv64imafd',
+        '-Wa,-march=rv64imafdxhwacha'
+    ])
+    riscv_link_opts = ' '.join([
+        '-static',
+        '-nostdlib',
+        '-nostartfiles',
+        '-lm',
+        '-lgcc',
+        '-T', os.path.abspath(os.path.join('common', 'test.ld'))
+    ])
+    _env = env.Clone(
+        CC=os.path.join(riscv_bin, 'riscv64-unknown-elf-gcc'),
+        CCFLAGS=riscv_gcc_opts,
+        ASPPFLAGS=riscv_gcc_opts,
+        #LINKFLAGS=riscv_link_opts
+    )
+
+    custom_bmarks = [
+        f for f in os.listdir(os.path.curdir) if os.path.isdir(f)
+    ]
+    for bmark in custom_bmarks:
+        bblvmlinux = build_custom_bmark(_env, bmark)
+        env.Alias('build-' + bmark, bblvmlinux)
+        env.Alias('run-' + bmark, env.Spike('#run-' + bmark, bblvmlinux))
+
+if __name__ == 'SCons.Script':
+    main()

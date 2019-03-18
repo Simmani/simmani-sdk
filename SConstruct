@@ -82,29 +82,6 @@ WriteCommands = ActionFactory(
     lambda target, binary, command:
     'WriteCommands("%s", "%s", "%s")' % (target, binary, command))
 
-def _init_d_tgts(target, source, env):
-    return target + [
-        os.path.join(env['OVERLAY'], 'etc', 'init.d', 'rcS'),
-        os.path.join(env['OVERLAY'], 'etc', 'init.d', 'rcK')
-    ], source
-
-def _overlay_actions(source, target, env, for_signature):
-    init_d = os.path.join(env['OVERLAY'], 'etc', 'init.d')
-    return [
-        Delete(init_d),
-        Mkdir(init_d),
-        WriteInit(os.path.join(init_d, 'rcS'), env['rcS']),
-        WriteInit(os.path.join(init_d, 'rcK'), '\n'.join([
-            '#!/bin/sh', '# Do nothing']))
-    ] + reduce(add, [
-        ([
-            Mkdir(t.dir.abspath)
-        ] if os.path.isdir(t.dir.abspath) else []) + [
-            Copy(t.abspath, s.abspath)
-        ]
-        for t, s in zip(target, source)
-    ])
-
 def _linux_srcs(target, source, env):
     return target, source + reduce(add, [
         [
@@ -157,6 +134,7 @@ def build_bblvmlinux(env, suffix, overlay_dir, overlay_files):
     bblvmlinux = env.Linux(
         os.path.join(env['OUTPUT_DIR'], 'bblvmlinux-' + suffix),
         buildroot_config)
+    env.Depends(bblvmlinux, overlay_files)
     env.SideEffect('#bblvmlinux', bblvmlinux)
     return bblvmlinux
 
@@ -182,16 +160,13 @@ def setup():
         BUILDERS={
             'Tools': Builder(
                 generator=_tool_actions),
-            'Overlay': Builder(
-                generator=_overlay_actions,
-                emitter=_init_d_tgts),
             'Linux': Builder(
                 generator=_linux_actions,
                 emitter=_linux_srcs),
             'Spike': Builder(
                 action=' '.join([
-                    'spike',
-                    '--isa=rv64gc',
+                    os.path.join(os.environ['RISCV'], 'bin', 'spike'),
+                    '--isa=rv64imafd',
                     '--extension=hwacha',
                     '$SOURCE.abspath', '>',
                     os.path.join(output_dir, '${SOURCE.file}.out')
@@ -200,25 +175,11 @@ def setup():
 
     return env
 
-def build_hello(env):
-    env.VariantDir(os.path.join('hello', 'hello'), 'hello', duplicate=0)
-    env['CC'] = os.path.join(env['ENV']['RISCV'], 'bin', 'riscv64-unknown-elf-gcc')
-    hello = env.Program(os.path.join('hello', 'hello', 'hello.c'))
-    overlay_dir = os.path.join(env['OVERLAY_DIR'], 'hello')
-    overlay_files = env.Overlay(
-        [
-            os.path.join(overlay_dir, 'root', t.name)
-            for t in hello
-        ],
-        hello,
-        OVERLAY=overlay_dir,
-        rcS='\n'.join(['#!/bin/sh', '/root/hello', 'poweroff']))
-    env.Alias('hello', build_bblvmlinux(env, 'hello', overlay_dir, overlay_files))
-
 def main():
     env = setup()
-    env.Alias('riscv-tools', env.Tools('#riscv-tools', None))
-    build_hello(env.Clone())
+    env.Alias('riscv-tools', env.Tools(
+        '#riscv-tools', os.path.join('resources', 'build-riscv-tools.sh')))
+    env.SConscript(os.path.join('custom', 'SConscript'), exports='env')
     env.SConscript(os.path.join('spec2006', 'SConscript'), exports='env')
     env.SConscript(os.path.join('spec2017', 'SConscript'), exports='env')
     env.Alias('clean', env.Command('#clean-linux', None, [
