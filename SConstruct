@@ -31,8 +31,8 @@ def _tool_actions(source, target, env, for_signature):
         'cd esp-tools/riscv-gnu-toolchain/riscv-gcc && '
         'git checkout be9abee2aaa919ad8530336569d17b5a60049717',
         'cd esp-tools/riscv-tests && '
-        'git remote add donggyu https://github.com/donggyukim/esp-tests.git ; '
-        'git fetch donggyu && '
+        'git remote add simmani https://github.com/Simmani/esp-tests.git ; '
+        'git fetch simmani && '
         'git checkout large-input && '
         'git submodule update --init '
     ] + \
