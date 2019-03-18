@@ -7,6 +7,3 @@
 [submodule "buildroot"]
 	path = buildroot
 	url = https://github.com/sifive/buildroot.git
-[submodule "Speckle"]
-	path = Speckle-2006
-	url = https://github.com/ccelio/Speckle.git
