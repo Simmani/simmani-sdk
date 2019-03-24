@@ -214,8 +214,10 @@ def main():
     env.Alias('riscv-tools', env.Tools(
         '#riscv-tools', os.path.join('resources', 'build-riscv-tools.sh')))
     env.SConscript(os.path.join('custom', 'SConscript'), exports='env')
-    env.SConscript(os.path.join('spec2006', 'SConscript'), exports='env')
-    env.SConscript(os.path.join('spec2017', 'SConscript'), exports='env')
+    if os.path.isdir(env['SPEC2006_DIR']):
+        env.SConscript(os.path.join('spec2006', 'SConscript'), exports='env')
+    if os.path.isdir(env['SPEC2017_DIR']):
+        env.SConscript(os.path.join('spec2017', 'SConscript'), exports='env')
     env.SConscript(os.path.join('hwacha-net', 'SConscript'), exports='env')
     env.Alias('clean', env.Command('#clean-linux', None, [
         ' '.join(['make', '-C', env['BUILDROOT_DIR'], 'clean']),
