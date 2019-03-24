@@ -82,6 +82,30 @@ WriteCommands = ActionFactory(
     lambda target, binary, command:
     'WriteCommands("%s", "%s", "%s")' % (target, binary, command))
 
+def _init_d_tgts(target, source, env):
+    return target + [
+        os.path.join(env['OVERLAY'], 'etc', 'init.d', 'rcS'),
+        os.path.join(env['OVERLAY'], 'etc', 'init.d', 'rcK')
+    ], source
+
+def _overlay_actions(source, target, env, for_signature):
+    init_d = os.path.join(env['OVERLAY'], 'etc', 'init.d')
+    return [
+        Delete(init_d),
+        Mkdir(init_d),
+        WriteInit(os.path.join(init_d, 'rcS'), env['rcS']),
+        WriteInit(os.path.join(init_d, 'rcK'), '\n'.join([
+            '#!/bin/sh', '# Do nothing']))
+    ] + reduce(add, [
+        ([
+            Mkdir(t.dir.abspath)
+        ] if os.path.isdir(t.dir.abspath) else []) + [
+            Copy(t.abspath, s.abspath)
+        ]
+        for t, s in zip(target, source)
+    ])
+
+
 def _linux_srcs(target, source, env):
     return target, source + reduce(add, [
         [
@@ -138,6 +162,17 @@ def build_bblvmlinux(env, suffix, overlay_dir, overlay_files):
     env.SideEffect('#bblvmlinux', bblvmlinux)
     return bblvmlinux
 
+def _spike_action(target, source, env, for_signature):
+    return ' '.join([
+        os.path.join(os.environ['RISCV'], 'bin', 'spike'),
+        '--isa=rv64imafd',
+        '--extension=hwacha'
+    ] + (['pk'] if env['SPIKE_PK'] else []) + [
+        '$SOURCE.abspath'
+    ] + env['SPIKE_ARGS'] + [
+        '>', os.path.join(env['OUTPUT_DIR'], '${SOURCE.file}.out')
+    ])
+
 def setup():
     variables = Variables('config.py', ARGUMENTS)
     variables.AddVariables(
@@ -157,20 +192,19 @@ def setup():
         WRITE_INIT=WriteInit,
         WRITE_COMMANDS=WriteCommands,
         BUILD_BBLVMLINUX=build_bblvmlinux,
+        SPIKE_PK=False,
+        SPIKE_ARGS=[],
         BUILDERS={
             'Tools': Builder(
                 generator=_tool_actions),
+            'Overlay': Builder(
+                generator=_overlay_actions,
+                emitter=_init_d_tgts),
             'Linux': Builder(
                 generator=_linux_actions,
                 emitter=_linux_srcs),
             'Spike': Builder(
-                action=' '.join([
-                    os.path.join(os.environ['RISCV'], 'bin', 'spike'),
-                    '--isa=rv64imafd',
-                    '--extension=hwacha',
-                    '$SOURCE.abspath', '>',
-                    os.path.join(output_dir, '${SOURCE.file}.out')
-                ]))
+                generator=_spike_action)
         })
 
     return env
@@ -182,6 +216,7 @@ def main():
     env.SConscript(os.path.join('custom', 'SConscript'), exports='env')
     env.SConscript(os.path.join('spec2006', 'SConscript'), exports='env')
     env.SConscript(os.path.join('spec2017', 'SConscript'), exports='env')
+    env.SConscript(os.path.join('hwacha-net', 'SConscript'), exports='env')
     env.Alias('clean', env.Command('#clean-linux', None, [
         ' '.join(['make', '-C', env['BUILDROOT_DIR'], 'clean']),
         ' '.join(['make', '-C', env['LINUX_DIR'], 'clean'])

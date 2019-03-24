@@ -1,31 +1,6 @@
 import os
 from operator import add
 from functools import reduce
-from SCons.Action import ActionFactory
-
-def _init_d_tgts(target, source, env):
-    return target + [
-        os.path.join(env['OVERLAY'], 'etc', 'init.d', 'rcS'),
-        os.path.join(env['OVERLAY'], 'etc', 'init.d', 'rcK')
-    ], source
-
-def _overlay_actions(source, target, env, for_signature):
-    init_d = os.path.join(env['OVERLAY'], 'etc', 'init.d')
-    WriteInit = env['WRITE_INIT']
-    return [
-        Delete(init_d),
-        Mkdir(init_d),
-        WriteInit(os.path.join(init_d, 'rcS'), env['rcS']),
-        WriteInit(os.path.join(init_d, 'rcK'), '\n'.join([
-            '#!/bin/sh', '# Do nothing']))
-    ] + reduce(add, [
-        ([
-            Mkdir(t.dir.abspath)
-        ] if os.path.isdir(t.dir.abspath) else []) + [
-            Copy(t.abspath, s.abspath)
-        ]
-        for t, s in zip(target, source)
-    ])
 
 def build_custom_bmark(env, bmark):
     build = os.path.abspath(os.path.join(bmark, 'build'))
@@ -50,12 +25,6 @@ poweroff""".format(bmark=bmark))
 def main():
     Import('env')
 
-    env.Append(BUILDERS={
-        'Overlay': Builder(
-            generator=_overlay_actions,
-            emitter=_init_d_tgts)
-    })
-
     riscv_bin = os.path.join(env['ENV']['RISCV'], 'bin')
     riscv_gcc_opts = ' '.join([
         '-I' + os.path.abspath('common'),
@@ -65,23 +34,15 @@ def main():
         '-march=rv64imafd',
         '-Wa,-march=rv64imafdxhwacha'
     ])
-    riscv_link_opts = ' '.join([
-        '-static',
-        '-nostdlib',
-        '-nostartfiles',
-        '-lm',
-        '-lgcc',
-        '-T', os.path.abspath(os.path.join('common', 'test.ld'))
-    ])
     _env = env.Clone(
         CC=os.path.join(riscv_bin, 'riscv64-unknown-elf-gcc'),
         CCFLAGS=riscv_gcc_opts,
         ASPPFLAGS=riscv_gcc_opts,
-        #LINKFLAGS=riscv_link_opts
     )
 
     custom_bmarks = [
-        f for f in os.listdir(os.path.curdir) if os.path.isdir(f)
+        f for f in os.listdir(os.path.curdir)
+        if os.path.isdir(f) and f != 'common'
     ]
     for bmark in custom_bmarks:
         bblvmlinux = build_custom_bmark(_env, bmark)

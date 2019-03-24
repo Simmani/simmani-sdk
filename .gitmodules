@@ -7,3 +7,6 @@
 [submodule "riscv-linux"]
 	path = linux
 	url = https://github.com/Simmani/riscv-linux.git
+[submodule "hwacha-net/hwacha-net"]
+	path = hwacha-net/hwacha-net
+	url = https://github.com/ucb-bar/hwacha-net.git
