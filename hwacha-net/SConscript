@@ -22,21 +22,35 @@ WEIGHTS = {
     "squeezenet_encoded_compressed_32": "squeezenet_encoded_compressed_single.weights",
 }
 
-IMAGES = [
-    #"dog.png",
+TEST_IMAGES = [
     "alexnet_collie.img",
     "squeezenet_mousetrap.img"
 ]
 
-def _hwacha_net_args(prefix, bmark):
+IMAGES = [
+    "baby.img",
+    "bear.img",
+    "bed.img",
+    "boat.img",
+    "car.img",
+    "cat.img",
+    "monkey.img",
+    "pencil.img",
+    "plane.img",
+    "rabbit.img",
+    "taxi.img"
+]
+
+def _hwacha_net_args(prefix, bmark, test=False):
     return [
         '-w', os.path.join(prefix, 'weights',
                            WEIGHTS[bmark.replace('-scalar', '')])
     ] + reduce(add, [
-        ['-i', os.path.join(prefix, 'images', img)] for img in IMAGES
+        ['-i', os.path.join(prefix, 'images', img)]
+        for img in (IMAGES if not test else TEST_IMAGES)
     ], [])
 
-def build_hwacha_net(env, bmark, binary):
+def build_hwacha_net(env, bmark, binary, test=False):
     rcS = """
 #!/bin/sh
 cd /root
@@ -45,26 +59,29 @@ ls -R -l
 echo "Run ./{bmark}-linux {args}"
 ./{bmark}-linux {args}
 poweroff
-""".format(bmark=bmark, args=' '.join(_hwacha_net_args('/root', bmark)))
-    overlay_dir = os.path.join(env['OVERLAY_DIR'], bmark)
+""".format(bmark=bmark, args=' '.join(_hwacha_net_args('/root', bmark, test)))
+    overlay_dir = os.path.join(env['OVERLAY_DIR'], bmark if not test else bmark + '-test')
     overlay_files = env.Overlay(
         [
             os.path.join(overlay_dir, 'root', binary.name),
             os.path.join(overlay_dir, 'root', 'weights',
                          WEIGHTS[bmark.replace('-scalar', '')])
         ] + [
-            os.path.join(overlay_dir, 'root', 'images', img) for img in IMAGES
+            os.path.join(overlay_dir, 'root', 'images', img)
+            for img in (IMAGES if not test else TEST_IMAGES)
         ],
         [
             binary,
             os.path.join('hwacha-net', 'weights',
                          WEIGHTS[bmark.replace('-scalar', '')])
         ] + [
-            os.path.join('hwacha-net', 'images', img) for img in IMAGES
+            os.path.join('hwacha-net', 'images', img)
+            for img in (IMAGES if not test else TEST_IMAGES)
         ],
         OVERLAY=overlay_dir,
         rcS=rcS)
-    return env['BUILD_BBLVMLINUX'](env, bmark, overlay_dir, overlay_files)
+    suffix = bmark if not test else bmark + '-test'
+    return env['BUILD_BBLVMLINUX'](env, suffix, overlay_dir, overlay_files)
 
 def main():
     Import('env')
@@ -111,24 +128,54 @@ def main():
         zip(HWACHA_NET,
                 binaries_vec_pk, binaries_vec_linux,
                 binaries_seq_pk, binaries_seq_linux):
-        bblvmlinux_vec = build_hwacha_net(env, bmark, binary_vec_linux)
-        bblvmlinux_seq = build_hwacha_net(env, bmark + '-scalar', binary_seq_linux)
+        bblvmlinux_vec = build_hwacha_net(
+            env, bmark, binary_vec_linux)
+        bblvmlinux_seq = build_hwacha_net(
+            env, bmark + '-scalar', binary_seq_linux)
+        bblvmlinux_vec_test = build_hwacha_net(
+            env, bmark, binary_vec_linux, True)
+        bblvmlinux_seq_test = build_hwacha_net(
+            env, bmark + '-scalar', binary_seq_linux, True)
         env.Alias('build-%s-vec' % bmark, bblvmlinux_vec)
         env.Alias('build-%s-seq' % bmark, bblvmlinux_seq)
         env.Alias('build-%s' % bmark, [bblvmlinux_vec, bblvmlinux_seq])
-        env.Alias('run-%s-vec' % bmark, env.Spike('#run-%s-vec' % bmark, bblvmlinux_vec))
-        env.Alias('run-%s-seq' % bmark, env.Spike('#run-%s-seq' % bmark, bblvmlinux_seq))
-        env.Alias('run-%s' % bmark, ['run-%s-%s' % (bmark, x) for x in ['vec', 'seq']])
+        env.Alias('build-%s-vec-test' % bmark, bblvmlinux_vec)
+        env.Alias('build-%s-seq-test' % bmark, bblvmlinux_seq)
+        env.Alias('build-%s-test' % bmark,
+                  [bblvmlinux_vec_test, bblvmlinux_seq_test])
+        env.Alias('run-%s-vec' % bmark, env.Spike(
+            '#run-%s-vec' % bmark, bblvmlinux_vec))
+        env.Alias('run-%s-seq' % bmark, env.Spike(
+            '#run-%s-seq' % bmark, bblvmlinux_seq))
+        env.Alias('run-%s' % bmark,
+                  ['run-%s-%s' % (bmark, x) for x in ['vec', 'seq']])
+        env.Alias('run-%s-vec-test' % bmark, env.Spike(
+            '#run-%s-vec-test' % bmark, bblvmlinux_vec_test))
+        env.Alias('run-%s-seq-test' % bmark, env.Spike(
+            '#run-%s-seq-test' % bmark, bblvmlinux_seq_test))
+        env.Alias('run-%s-test' % bmark,
+                  ['run-%s-%s-test' % (bmark, x) for x in ['vec', 'seq']])
         env.Alias('pk-%s-vec' % bmark, env.Spike(
             '#pk-%s-vec' % bmark, binary_vec_pk, SPIKE_PK=True,
             SPIKE_ARGS=_hwacha_net_args(hwacha_net_dir, bmark)))
         env.Alias('pk-%s-seq' % bmark, env.Spike(
             '#pk-%s-seq' % bmark, binary_seq_pk, SPIKE_PK=True,
             SPIKE_ARGS=_hwacha_net_args(hwacha_net_dir, bmark + '-scalar')))
-        env.Alias('pk-%s' % bmark, ['pk-%s-%s' % (bmark, x) for x in ['vec', 'seq']])
+        env.Alias('pk-%s' % bmark,
+                  ['pk-%s-%s' % (bmark, x) for x in ['vec', 'seq']])
+        env.Alias('pk-%s-vec-test' % bmark, env.Spike(
+            '#pk-%s-vec-test' % bmark, binary_vec_pk, SPIKE_PK=True,
+            SPIKE_ARGS=_hwacha_net_args(hwacha_net_dir, bmark, True)))
+        env.Alias('pk-%s-seq-test' % bmark, env.Spike(
+            '#pk-%s-seq-test' % bmark, binary_seq_pk, SPIKE_PK=True,
+            SPIKE_ARGS=_hwacha_net_args(hwacha_net_dir, bmark + '-scalar', True)))
+        env.Alias('pk-%s-test' % bmark,
+                  ['pk-%s-%s-test' % (bmark, x) for x in ['vec', 'seq']])
 
     env.Alias('run-hwacha-net', ['run-' + bmark for bmark in HWACHA_NET])
     env.Alias('pk-hwacha-net', ['pk-' + bmark for bmark in HWACHA_NET])
+    env.Alias('run-hwacha-net-test', ['run-%s-test' % bmark for bmark in HWACHA_NET])
+    env.Alias('pk-hwacha-net-test', ['pk-%s-test' % bmark for bmark in HWACHA_NET])
 
 if __name__ == 'SCons.Script':
     main()

@@ -20,9 +20,9 @@
 * Two versions: Scalar(`seq`), Vector(`vec`)
 * Compile binaries for `pk`: `scons hwacha-net`
 * Compile binaries for Linux: `scons hwacha-net-linux`
-* Build Linux images: `scons build-hwacha-net`
-* Run Linux images on Spike: `scons run-hwacha-net`
-* Test with `pk` on Spike: `scons pk-hwacha-net`
+* Build Linux images: `scons build-hwacha-net[-test]`
+* Run Linux images on Spike: `scons run-hwacha-net[-test]`
+* Test with `pk` on Spike: `scons pk-hwacha-net[-test]`
 * Clean: `scons clean-hwacha-net`
 
 ## [SPEC CPU 2017](https://www.spec.org/cpu2017/)
