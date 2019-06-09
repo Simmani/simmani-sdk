@@ -4,46 +4,6 @@ from operator import add
 from functools import reduce
 from SCons.Action import ActionFactory
 
-def _tool_actions(source, target, env, for_signature):
-    def build_project(project, flags=None):
-        build = os.path.join('esp-tools', project, 'build')
-        return ([
-            Mkdir(build)
-        ] if not os.path.isdir(build) else []) + [
-            ' '.join([
-                'cd', build, '&&', '../configure',
-                '--prefix=%s' % env['ENV']['RISCV']
-            ] + (flags if flags else [])),
-            ' '.join(['make', '-C', build]),
-            ' '.join(['make', '-C', build, 'install'])
-        ]
-    return ([
-        'git clone https://github.com/ucb-bar/esp-tools.git'
-    ] if not os.path.isdir('esp-tools') else []) + [
-        'cd esp-tools && git submodule update --init',
-        'cd esp-tools/riscv-gnu-toolchain && '
-        'git submodule init && '
-        'git submodule update riscv-binutils-gdb && '
-        'git submodule update riscv-gcc && '
-        'git submodule update riscv-glibc && '
-        'git submodule update riscv-newlib && '
-        'git submodule update riscv-dejagnu',
-        'cd esp-tools/riscv-gnu-toolchain/riscv-gcc && '
-        'git checkout be9abee2aaa919ad8530336569d17b5a60049717',
-        'cd esp-tools/riscv-tests && '
-        'git remote add simmani https://github.com/Simmani/esp-tests.git ; '
-        'git fetch simmani && '
-        'git checkout large-input && '
-        'git submodule update --init '
-    ] + \
-    build_project('riscv-fesvr') + \
-    build_project('riscv-isa-sim', ['--with-fesvr=%s' % env['ENV']['RISCV']]) + \
-    build_project('riscv-gnu-toolchain', ['--with-arch=rv64imafd']) + \
-    build_project('riscv-pk', ['--host=riscv64-unknown-elf']) + \
-    build_project('riscv-tests', ['--prefix=%s/riscv64-unknown-elf' % env['ENV']['RISCV']]) + [
-        ' '.join(['make', '-C', os.path.join('esp-tools', 'riscv-gnu-toolchain', 'build'), 'linux'])
-    ]
-
 def _change_overlay(target, source, overlay):
     with open(target, 'w') as _t, open(source, 'r') as _s:
         for line in _s:
@@ -195,8 +155,6 @@ def setup():
         SPIKE_PK=False,
         SPIKE_ARGS=[],
         BUILDERS={
-            'Tools': Builder(
-                generator=_tool_actions),
             'Overlay': Builder(
                 generator=_overlay_actions,
                 emitter=_init_d_tgts),
@@ -211,8 +169,6 @@ def setup():
 
 def main():
     env = setup()
-    env.Alias('riscv-tools', env.Tools(
-        '#riscv-tools', os.path.join('resources', 'build-riscv-tools.sh')))
     env.SConscript(os.path.join('custom', 'SConscript'), exports='env')
     if os.path.isdir(env['SPEC2006_DIR']):
         env.SConscript(os.path.join('spec2006', 'SConscript'), exports='env')

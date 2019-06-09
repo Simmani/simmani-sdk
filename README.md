@@ -5,7 +5,7 @@
 ## Getting Started
 
 * Update submodules: `git submodule update --init`
-* Install RISC-V ESP Tools: `scons riscv-tools`
+* Install RISC-V ESP Tools: `./build-riscv-tools.sh`
 
 ## Custom Benchmarks
 
